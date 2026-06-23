@@ -18,7 +18,6 @@ export class GameManager extends Component {
     @property({ type: SpriteFrame })
     whiteSprite: SpriteFrame | null = null;
 
-    // --- TAMBAHAN BARU: Referensi ke GridArea ---
     @property({ type: Node})
     gridArea: Node | null = null;
 
@@ -37,19 +36,30 @@ export class GameManager extends Component {
     @property({ type: Label})
     whiteScoreLabel: Label | null = null;
 
-    // Array untuk menyimpan node indikator agar bisa dihapus saat ganti giliran
     private validMoveNodes: Node[] = [];
-
     private boardData: Player[][] = [];
     private readonly BOARD_SIZE: number = 8;
     private currentPlayer: Player = Player.BLACK; 
     private readonly CELL_SIZE: number = 90;
-
-    // --- TAMBAHAN BARU ---
-    // Matriks untuk menyimpan referensi Node visual agar bisa diubah gambarnya nanti
     private discNodes: (Node | null)[][] = []; 
 
-    // 8 Arah: [baris, kolom] -> Atas, Bawah, Kiri, Kanan, dan 4 Diagonal
+    //Atribut buat entitas ai nya
+    private isAIEnabled: boolean = true;
+    private aiPlayer: Player = Player.WHITE;
+    private aiSearchDepth: number = 3; //Kedalaman pencarian minimax
+
+    //Bobot posisi papan untuk evaluasi heuristik si entitas ai
+    private readonly boardWeights = [
+        [100, -20,  10,   5,   5,  10, -20, 100],
+        [-20, -50,  -2,  -2,  -2,  -2, -50, -20],
+        [ 10,  -2,   1,   1,   1,   1,  -2,  10],
+        [  5,  -2,   1,   1,   1,   1,  -2,   5],
+        [  5,  -2,   1,   1,   1,   1,  -2,   5],
+        [ 10,  -2,   1,   1,   1,   1,  -2,  10],
+        [-20, -50,  -2,  -2,  -2,  -2, -50, -20],
+        [100, -20,  10,   5,   5,  10, -20, 100]
+    ];
+
     private readonly directions = [
         [-1, 0], [1, 0], [0, -1], [0, 1], 
         [-1, -1], [-1, 1], [1, -1], [1, 1]
@@ -57,16 +67,16 @@ export class GameManager extends Component {
 
     start() {
         this.initializeBoard();
-        this.registerInput(); // Panggil fungsi input saat game mulai
+        this.registerInput();
     }
 
     private initializeBoard() {
         for (let row = 0; row < this.BOARD_SIZE; row++) {
             this.boardData[row] = [];
-            this.discNodes[row] = []; // Inisialisasi baris untuk node visual
+            this.discNodes[row] = [];
             for (let col = 0; col < this.BOARD_SIZE; col++) {
                 this.boardData[row][col] = Player.NONE;
-                this.discNodes[row][col] = null; // Kosongkan node di awal
+                this.discNodes[row][col] = null;
             }
         }
 
@@ -76,24 +86,17 @@ export class GameManager extends Component {
         this.boardData[4][4] = Player.WHITE;
 
         this.renderBoard();
-
         this.updateTurnUI();
         this.showValidMoves();
         this.updateScoreUI();
     }
 
     private renderBoard() {
-        // Hapus semua bidak visual yang mungkin ada (berguna jika nanti ada tombol Restart)
-        if (this.gridArea) {
-            this.gridArea.removeAllChildren();
-        }
+        if (this.gridArea) this.gridArea.removeAllChildren();
 
-        // Looping untuk mengecek isi matriks 8x8
         for (let row = 0; row < this.BOARD_SIZE; row++) {
             for (let col = 0; col < this.BOARD_SIZE; col++) {
                 let cellPlayer = this.boardData[row][col];
-                
-                // Jika di koordinat tersebut ada pemain (bukan NONE), munculkan bidaknya
                 if (cellPlayer !== Player.NONE) {
                     this.spawnDiscVisually(row, col, cellPlayer);
                 }
@@ -111,18 +114,16 @@ export class GameManager extends Component {
 
         newDisc.setPosition(new Vec3(posX, posY, 0));
         this.gridArea.addChild(newDisc);
-
-        // Simpan referensi node ini agar nanti bisa diakses untuk dibalik warnanya!
         this.discNodes[row][col] = newDisc;
     }
 
     private tryPlaceDisc(row: number, col: number) {
         if (this.boardData[row][col] !== Player.NONE) return;
 
-        let flippableDiscs = this.getFlippableDiscs(row, col, this.currentPlayer);
+        // Gunakan parameter boardData asli untuk eksekusi nyata
+        let flippableDiscs = this.getFlippableDiscs(this.boardData, row, col, this.currentPlayer);
         if (flippableDiscs.length === 0) return; 
 
-        // Taruh bidak dan balik bidak lawan
         this.boardData[row][col] = this.currentPlayer;
         this.spawnDiscVisually(row, col, this.currentPlayer);
 
@@ -130,68 +131,61 @@ export class GameManager extends Component {
             this.boardData[pos.r][pos.c] = this.currentPlayer;
             this.flipDiscVisually(pos.r, pos.c, this.currentPlayer);
         }
-
-        // --- UBAH BAGIAN INI KE BAWAH ---
         
-        // 1. Ganti giliran ke pemain berikutnya
         this.currentPlayer = (this.currentPlayer === Player.BLACK) ? Player.WHITE : Player.BLACK;
-
-        // 2. Evaluasi apakah pemain berikutnya bisa jalan, kena skip, atau game over
         this.checkTurnStatus(); 
     }
 
-    // --- TAMBAHAN BARU: Mengevaluasi status giliran ---
     private checkTurnStatus() {
-        // 1. Cek ketersediaan langkah untuk pemain saat ini
-        let currentPlayerMoves = this.getAllValidMoves(this.currentPlayer);
+        let currentPlayerMoves = this.getAllValidMoves(this.boardData, this.currentPlayer);
 
         if (currentPlayerMoves.length > 0) {
-            // Jika ada langkah, permainan berjalan normal
             this.updateTurnUI();
             this.showValidMoves();
             this.updateScoreUI();
+            
+            // --- TRIGGER AI JIKA GILIRANNYA ---
+            if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) {
+                this.scheduleOnce(() => {
+                    this.executeAITurn();
+                }, 0.5); // Jeda 0.5 detik agar terlihat seperti sedang berpikir
+            }
             return;
         }
 
-        // 2. Jika pemain saat ini TIDAK punya langkah, cek lawannya
         let opponent = (this.currentPlayer === Player.BLACK) ? Player.WHITE : Player.BLACK;
-        let opponentMoves = this.getAllValidMoves(opponent);
+        let opponentMoves = this.getAllValidMoves(this.boardData, opponent);
 
         if (opponentMoves.length > 0) {
-            // Lawan punya langkah, maka pemain saat ini di-SKIP
-            // let skippedPlayerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
-            // console.log(`Pemain ${skippedPlayerName} tidak punya langkah valid! Giliran dilewati (Pass).`);
-            
-            // Kembalikan giliran ke lawan
             this.currentPlayer = opponent;
             
             this.updateTurnUI();
             this.showValidMoves();
             this.updateScoreUI();
 
-            // Beri tahu di UI bahwa giliran di-skip
             if (this.turnLabel) {
                 let activePlayerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
-                // this.turnLabel.string = `${skippedPlayerName} Pass! Giliran: ${activePlayerName}`;
-                this.turnLabel.string = `${activePlayerName}`;
+                this.turnLabel.string = `${activePlayerName} (Skip!)`;
+            }
 
+            // Jika setelah skip ternyata giliran AI, panggil AI lagi
+            if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) {
+                this.scheduleOnce(() => {
+                    this.executeAITurn();
+                }, 0.5);
             }
         } else {
-            // 3. Jika KEDUA pemain tidak punya langkah, GAME OVER
             this.updateScoreUI();
             this.handleGameOver();
         }
     }
 
-    // --- TAMBAHAN BARU: Menangani kondisi akhir permainan ---
     private handleGameOver() {
-        // Bersihkan titik-titik indikator dari layar
         for (let node of this.validMoveNodes) {
             node.destroy();
         }
         this.validMoveNodes = [];
 
-        // Hitung siapa yang menang berdasarkan UI Skor yang terakhir
         let blackCount = 0;
         let whiteCount = 0;
         for (let row = 0; row < this.BOARD_SIZE; row++) {
@@ -202,31 +196,17 @@ export class GameManager extends Component {
         }
 
         let winnerText = "";
-        if (blackCount > whiteCount) {
-            winnerText = "HITAM!";
-        } else if (whiteCount > blackCount) {
-            winnerText = "PUTIH!";
-        } else {
-            winnerText = "SERI!";
-        }
-
-        console.log(`GAME OVER! ${winnerText}`);
+        if (blackCount > whiteCount) winnerText = "HITAM!";
+        else if (whiteCount > blackCount) winnerText = "PUTIH (AI)!";
+        else winnerText = "SERI!";
         
-        // Tampilkan teks kemenangan di Label Giliran
         if (this.turnLabel) {
             this.giliranLabel.string = `Winner:`;
             this.turnLabel.string = ` ${winnerText}`;
-            if (blackCount > whiteCount) {
-                this.turnLabel.color = new Color(0, 0, 0, 255); 
-            } else if (whiteCount > blackCount) {
-                this.turnLabel.color = new Color(255, 255, 255, 255); 
-            } else {
-                this.turnLabel.color = new Color(0, 0, 0, 255); 
-            }            
+            this.turnLabel.color = blackCount > whiteCount ? new Color(0, 0, 0, 255) : new Color(255, 255, 255, 255);        
         }
     }
 
-    // Fungsi baru untuk mengganti gambar bidak yang terapit
     private flipDiscVisually(row: number, col: number, player: Player) {
         let node = this.discNodes[row][col];
         if (node) {
@@ -235,71 +215,58 @@ export class GameManager extends Component {
         }
     }
 
-    // --- TAMBAHAN BARU: Fungsi Input & Konversi Koordinat ---
     private registerInput() {
         if (this.gridArea) {
-            // Pasang 'telinga' untuk mendengarkan event klik/sentuh di area grid
             this.gridArea.on(Node.EventType.TOUCH_END, this.onBoardClicked, this);
         }
     }
 
     private onBoardClicked(event: EventTouch) {
-        // 1. Dapatkan lokasi klik di layar
+        // Blokir input pemain jika sedang giliran AI
+        if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) return;
+
         let touchPos = event.getUILocation();
-        
-        // 2. Ubah koordinat layar menjadi koordinat lokal di dalam GridArea
         let uiTransform = this.gridArea.getComponent(UITransform);
         let localPos = uiTransform.convertToNodeSpaceAR(new Vec3(touchPos.x, touchPos.y, 0));
 
-        // 3. Konversi koordinat (X, Y) menjadi Indeks Matriks (Kolom, Baris)
-        // Karena Anchor Point GridArea adalah (0,1) alias pojok kiri atas:
-        // Nilai X bergerak ke kanan (positif), Nilai Y bergerak ke bawah (negatif)
         let col = Math.floor(localPos.x / this.CELL_SIZE);
         let row = Math.floor(Math.abs(localPos.y) / this.CELL_SIZE);
 
-        // 4. Pastikan klik tidak keluar dari batas array (0-7)
         if (row >= 0 && row < this.BOARD_SIZE && col >= 0 && col < this.BOARD_SIZE) {
             this.tryPlaceDisc(row, col);
         }
     }
 
-    private getFlippableDiscs(row: number, col: number, player: Player): {r: number, c: number}[] {
+    // --- DIUBAH: Sekarang menerima parameter board agar bisa disimulasikan AI ---
+    private getFlippableDiscs(board: Player[][], row: number, col: number, player: Player): {r: number, c: number}[] {
         let flippable: {r: number, c: number}[] = [];
         let opponent = (player === Player.BLACK) ? Player.WHITE : Player.BLACK;
 
-        // Cek ke 8 arah satu per satu
         for (let dir of this.directions) {
             let r = row + dir[0];
             let c = col + dir[1];
             let tempFlippable: {r: number, c: number}[] = [];
 
-            // Selama menemukan bidak lawan, terus maju dan catat koordinatnya
-            while (r >= 0 && r < this.BOARD_SIZE && c >= 0 && c < this.BOARD_SIZE && this.boardData[r][c] === opponent) {
+            while (r >= 0 && r < this.BOARD_SIZE && c >= 0 && c < this.BOARD_SIZE && board[r][c] === opponent) {
                 tempFlippable.push({r: r, c: c});
                 r += dir[0];
                 c += dir[1];
             }
 
-            // Jika setelah melewati bidak lawan kita menemukan bidak kita sendiri, 
-            // berarti bidak lawan tersebut SAH terapit!
-            if (r >= 0 && r < this.BOARD_SIZE && c >= 0 && c < this.BOARD_SIZE && this.boardData[r][c] === player && tempFlippable.length > 0) {
-                // Masukkan semua bidak yang terapit di arah ini ke daftar utama
+            if (r >= 0 && r < this.BOARD_SIZE && c >= 0 && c < this.BOARD_SIZE && board[r][c] === player && tempFlippable.length > 0) {
                 flippable.push(...tempFlippable); 
             }
         }
-
         return flippable;
     }
 
-    private getAllValidMoves(player: Player): {r: number, c: number}[] {
+    // --- DIUBAH: Sekarang menerima parameter board ---
+    private getAllValidMoves(board: Player[][], player: Player): {r: number, c: number}[] {
         let validMoves: {r: number, c: number}[] = [];
-        
-        // Looping ke seluruh kotak di papan
         for (let row = 0; row < this.BOARD_SIZE; row++) {
             for (let col = 0; col < this.BOARD_SIZE; col++) {
-                // Hanya cek kotak yang kosong
-                if (this.boardData[row][col] === Player.NONE) {
-                    let flippable = this.getFlippableDiscs(row, col, player);
+                if (board[row][col] === Player.NONE) {
+                    let flippable = this.getFlippableDiscs(board, row, col, player);
                     if (flippable.length > 0) {
                         validMoves.push({r: row, c: col});
                     }
@@ -310,16 +277,16 @@ export class GameManager extends Component {
     }
 
     private showValidMoves() {
-        // 1. Bersihkan indikator dari giliran sebelumnya
+        // Tampilkan indikator hanya jika giliran pemain manusia (Opsional, agar lebih rapi)
+        if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) return;
+
         for (let node of this.validMoveNodes) {
             node.destroy();
         }
-        this.validMoveNodes = []; // Kosongkan array
+        this.validMoveNodes = [];
 
-        // 2. Dapatkan langkah yang valid untuk pemain saat ini
-        let validMoves = this.getAllValidMoves(this.currentPlayer);
+        let validMoves = this.getAllValidMoves(this.boardData, this.currentPlayer);
 
-        // 3. Munculkan titik di koordinat yang valid
         if (this.validMovePrefab) {
             for (let move of validMoves) {
                 let indicator = instantiate(this.validMovePrefab);
@@ -328,8 +295,6 @@ export class GameManager extends Component {
                 
                 indicator.setPosition(new Vec3(posX, posY, 0));
                 this.gridArea.addChild(indicator);
-                
-                // Simpan ke array agar nanti bisa dihapus
                 this.validMoveNodes.push(indicator); 
             }
         }
@@ -337,15 +302,9 @@ export class GameManager extends Component {
 
     private updateTurnUI() {
         if (this.turnLabel) {
-            let playerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
+            let playerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih (AI)";
             this.turnLabel.string = `${playerName}`;
-            
-            // Opsional: Ganti warna teks biar makin interaktif (Hitam/Putih)
-            if (this.currentPlayer === Player.BLACK) {
-                this.turnLabel.color = new Color(0, 0, 0, 255); // hitam
-            } else {
-                this.turnLabel.color = new Color(255, 255, 255, 255); // Putih
-            }
+            this.turnLabel.color = this.currentPlayer === Player.BLACK ? new Color(0, 0, 0, 255) : new Color(255, 255, 255, 255);
         }
     }
 
@@ -353,26 +312,111 @@ export class GameManager extends Component {
         let blackCount = 0;
         let whiteCount = 0;
 
-        // Looping ke seluruh kotak untuk menghitung jumlah masing-masing warna
         for (let row = 0; row < this.BOARD_SIZE; row++) {
             for (let col = 0; col < this.BOARD_SIZE; col++) {
-                if (this.boardData[row][col] === Player.BLACK) {
-                    blackCount++;
-                } else if (this.boardData[row][col] === Player.WHITE) {
-                    whiteCount++;
-                }
+                if (this.boardData[row][col] === Player.BLACK) blackCount++;
+                else if (this.boardData[row][col] === Player.WHITE) whiteCount++;
             }
         }
 
-        // Update teks pada label di layar
-        if (this.blackScoreLabel) {
-            this.blackScoreLabel.string = `Hitam: ${blackCount}`;
+        if (this.blackScoreLabel) this.blackScoreLabel.string = `Hitam: ${blackCount}`;
+        if (this.whiteScoreLabel) this.whiteScoreLabel.string = `Putih: ${whiteCount}`;
+    }
+
+    // ==========================================
+    // --- BAGIAN LOGIKA AI (MINIMAX + TOP K) ---
+    // ==========================================
+
+    private executeAITurn() {
+        let validMoves = this.getAllValidMoves(this.boardData, this.aiPlayer);
+        if (validMoves.length === 0) return;
+
+        //Array untuk nyimpen skor tiap kemungkinan langkah
+        let moveScores: { move: {r: number, c: number}, score: number }[] = [];
+
+        //Ngitung skor semua kemungkinan langkah saat ini
+        for (let move of validMoves) {
+            let simulatedBoard = this.simulateMove(this.boardData, move.r, move.c, this.aiPlayer);
+            let score = this.minimax(simulatedBoard, this.aiSearchDepth - 1, -Infinity, Infinity, false);
+            moveScores.push({ move: move, score: score });
         }
-        if (this.whiteScoreLabel) {
-            this.whiteScoreLabel.string = `Putih: ${whiteCount}`;
+
+        //Sorting dari skor yang paling tinggi
+        moveScores.sort((a, b) => b.score - a.score);
+
+        //Ambil 3 langkah terbaik (Atau sesuaikan jika langkah valid kurang dari 3)
+        let topK = Math.min(3, moveScores.length);
+        let topMoves = moveScores.slice(0, topK);
+
+        //Pilih acak dari top moves
+        let randomIndex = Math.floor(Math.random() * topMoves.length);
+        let chosenMove = topMoves[randomIndex].move;
+
+        //Eksekusi langkah yang dipilih secara acak dari yang terbaik
+        this.tryPlaceDisc(chosenMove.r, chosenMove.c);
+    }
+
+    private minimax(board: Player[][], depth: number, alpha: number, beta: number, isMaximizing: boolean): number {
+        let currentPlayer = isMaximizing ? this.aiPlayer : (this.aiPlayer === Player.BLACK ? Player.WHITE : Player.BLACK);
+        let validMoves = this.getAllValidMoves(board, currentPlayer);
+
+        //Jika mencapai ujung pencarian atau tidak ada langkah tersisa
+        if (depth === 0 || validMoves.length === 0) {
+            return this.evaluateBoard(board);
+        }
+
+        if (isMaximizing) {
+            let maxEval = -Infinity;
+            for (let move of validMoves) {
+                let newBoard = this.simulateMove(board, move.r, move.c, currentPlayer);
+                let evalScore = this.minimax(newBoard, depth - 1, alpha, beta, false);
+                maxEval = Math.max(maxEval, evalScore);
+                alpha = Math.max(alpha, evalScore);
+                if (beta <= alpha) break; //Alpha-beta pruning untuk efisiensi
+            }
+            return maxEval;
+        } else {
+            let minEval = Infinity;
+            for (let move of validMoves) {
+                let newBoard = this.simulateMove(board, move.r, move.c, currentPlayer);
+                let evalScore = this.minimax(newBoard, depth - 1, alpha, beta, true);
+                minEval = Math.min(minEval, evalScore);
+                beta = Math.min(beta, evalScore);
+                if (beta <= alpha) break;
+            }
+            return minEval;
         }
     }
+
+    //Fungsi Evaluasi Heuristik (Menilai kualitas papan)
+    private evaluateBoard(board: Player[][]): number {
+        let score = 0;
+        let opponent = (this.aiPlayer === Player.BLACK) ? Player.WHITE : Player.BLACK;
+
+        for (let row = 0; row < this.BOARD_SIZE; row++) {
+            for (let col = 0; col < this.BOARD_SIZE; col++) {
+                if (board[row][col] === this.aiPlayer) {
+                    score += this.boardWeights[row][col];
+                } else if (board[row][col] === opponent) {
+                    score -= this.boardWeights[row][col];
+                }
+            }
+        }
+        return score;
+    }
+
+    // Helper untuk mensimulasikan langkah (Duplikat papan agar tidak merusak UI)
+    private simulateMove(board: Player[][], row: number, col: number, player: Player): Player[][] {
+        // Clone 2D array
+        let newBoard = board.map(arr => [...arr]); 
+        
+        let flippable = this.getFlippableDiscs(newBoard, row, col, player);
+        newBoard[row][col] = player;
+        
+        for (let pos of flippable) {
+            newBoard[pos.r][pos.c] = player;
+        }
+        
+        return newBoard;
+    }
 }
-
-
-
