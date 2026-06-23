@@ -19,19 +19,22 @@ export class GameManager extends Component {
     whiteSprite: SpriteFrame | null = null;
 
     // --- TAMBAHAN BARU: Referensi ke GridArea ---
-    @property({ type: Node, tooltip: 'Masukkan node GridArea ke sini' })
+    @property({ type: Node})
     gridArea: Node | null = null;
 
-    @property({ type: Prefab, tooltip: 'Prefab untuk titik indikator langkah valid' })
+    @property({ type: Prefab})
     validMovePrefab: Prefab | null = null;
 
-    @property({ type: Label, tooltip: 'Label UI penanda giliran' })
+    @property({ type: Label})
     turnLabel: Label | null = null;
 
-    @property({ type: Label, tooltip: 'Label UI Skor Hitam' })
+    @property({ type: Label})
+    giliranLabel: Label | null = null;
+
+    @property({ type: Label})
     blackScoreLabel: Label | null = null;
 
-    @property({ type: Label, tooltip: 'Label UI Skor Putih' })
+    @property({ type: Label})
     whiteScoreLabel: Label | null = null;
 
     // Array untuk menyimpan node indikator agar bisa dihapus saat ganti giliran
@@ -113,6 +116,116 @@ export class GameManager extends Component {
         this.discNodes[row][col] = newDisc;
     }
 
+    private tryPlaceDisc(row: number, col: number) {
+        if (this.boardData[row][col] !== Player.NONE) return;
+
+        let flippableDiscs = this.getFlippableDiscs(row, col, this.currentPlayer);
+        if (flippableDiscs.length === 0) return; 
+
+        // Taruh bidak dan balik bidak lawan
+        this.boardData[row][col] = this.currentPlayer;
+        this.spawnDiscVisually(row, col, this.currentPlayer);
+
+        for (let pos of flippableDiscs) {
+            this.boardData[pos.r][pos.c] = this.currentPlayer;
+            this.flipDiscVisually(pos.r, pos.c, this.currentPlayer);
+        }
+
+        // --- UBAH BAGIAN INI KE BAWAH ---
+        
+        // 1. Ganti giliran ke pemain berikutnya
+        this.currentPlayer = (this.currentPlayer === Player.BLACK) ? Player.WHITE : Player.BLACK;
+
+        // 2. Evaluasi apakah pemain berikutnya bisa jalan, kena skip, atau game over
+        this.checkTurnStatus(); 
+    }
+
+    // --- TAMBAHAN BARU: Mengevaluasi status giliran ---
+    private checkTurnStatus() {
+        // 1. Cek ketersediaan langkah untuk pemain saat ini
+        let currentPlayerMoves = this.getAllValidMoves(this.currentPlayer);
+
+        if (currentPlayerMoves.length > 0) {
+            // Jika ada langkah, permainan berjalan normal
+            this.updateTurnUI();
+            this.showValidMoves();
+            this.updateScoreUI();
+            return;
+        }
+
+        // 2. Jika pemain saat ini TIDAK punya langkah, cek lawannya
+        let opponent = (this.currentPlayer === Player.BLACK) ? Player.WHITE : Player.BLACK;
+        let opponentMoves = this.getAllValidMoves(opponent);
+
+        if (opponentMoves.length > 0) {
+            // Lawan punya langkah, maka pemain saat ini di-SKIP
+            // let skippedPlayerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
+            // console.log(`Pemain ${skippedPlayerName} tidak punya langkah valid! Giliran dilewati (Pass).`);
+            
+            // Kembalikan giliran ke lawan
+            this.currentPlayer = opponent;
+            
+            this.updateTurnUI();
+            this.showValidMoves();
+            this.updateScoreUI();
+
+            // Beri tahu di UI bahwa giliran di-skip
+            if (this.turnLabel) {
+                let activePlayerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
+                // this.turnLabel.string = `${skippedPlayerName} Pass! Giliran: ${activePlayerName}`;
+                this.turnLabel.string = `${activePlayerName}`;
+
+            }
+        } else {
+            // 3. Jika KEDUA pemain tidak punya langkah, GAME OVER
+            this.updateScoreUI();
+            this.handleGameOver();
+        }
+    }
+
+    // --- TAMBAHAN BARU: Menangani kondisi akhir permainan ---
+    private handleGameOver() {
+        // Bersihkan titik-titik indikator dari layar
+        for (let node of this.validMoveNodes) {
+            node.destroy();
+        }
+        this.validMoveNodes = [];
+
+        // Hitung siapa yang menang berdasarkan UI Skor yang terakhir
+        let blackCount = 0;
+        let whiteCount = 0;
+        for (let row = 0; row < this.BOARD_SIZE; row++) {
+            for (let col = 0; col < this.BOARD_SIZE; col++) {
+                if (this.boardData[row][col] === Player.BLACK) blackCount++;
+                else if (this.boardData[row][col] === Player.WHITE) whiteCount++;
+            }
+        }
+
+        let winnerText = "";
+        if (blackCount > whiteCount) {
+            winnerText = "HITAM!";
+        } else if (whiteCount > blackCount) {
+            winnerText = "PUTIH!";
+        } else {
+            winnerText = "SERI!";
+        }
+
+        console.log(`GAME OVER! ${winnerText}`);
+        
+        // Tampilkan teks kemenangan di Label Giliran
+        if (this.turnLabel) {
+            this.giliranLabel.string = `Winner:`;
+            this.turnLabel.string = ` ${winnerText}`;
+            if (blackCount > whiteCount) {
+                this.turnLabel.color = new Color(0, 0, 0, 255); 
+            } else if (whiteCount > blackCount) {
+                this.turnLabel.color = new Color(255, 255, 255, 255); 
+            } else {
+                this.turnLabel.color = new Color(0, 0, 0, 255); 
+            }            
+        }
+    }
+
     // Fungsi baru untuk mengganti gambar bidak yang terapit
     private flipDiscVisually(row: number, col: number, player: Player) {
         let node = this.discNodes[row][col];
@@ -148,33 +261,6 @@ export class GameManager extends Component {
         if (row >= 0 && row < this.BOARD_SIZE && col >= 0 && col < this.BOARD_SIZE) {
             this.tryPlaceDisc(row, col);
         }
-    }
-
-    private tryPlaceDisc(row: number, col: number) {
-        if (this.boardData[row][col] !== Player.NONE) return;
-
-        let flippableDiscs = this.getFlippableDiscs(row, col, this.currentPlayer);
-
-        if (flippableDiscs.length === 0) return; 
-
-        // Taruh bidak dan balik bidak lawan
-        this.boardData[row][col] = this.currentPlayer;
-        this.spawnDiscVisually(row, col, this.currentPlayer);
-
-        for (let pos of flippableDiscs) {
-            this.boardData[pos.r][pos.c] = this.currentPlayer;
-            this.flipDiscVisually(pos.r, pos.c, this.currentPlayer);
-        }
-
-        // Ganti giliran
-        this.currentPlayer = (this.currentPlayer === Player.BLACK) ? Player.WHITE : Player.BLACK;
-
-        // Update UI setelah bidak diletakkan
-        this.updateTurnUI();
-        this.showValidMoves();
-        
-        // --- TAMBAHAN BARU: Hitung ulang skor setiap kali giliran selesai ---
-        this.updateScoreUI();
     }
 
     private getFlippableDiscs(row: number, col: number, player: Player): {r: number, c: number}[] {
