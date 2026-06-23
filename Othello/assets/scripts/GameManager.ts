@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Prefab, instantiate, Sprite, SpriteFrame, Vec3, EventTouch, UITransform } from 'cc';
+import { _decorator, Component, Node, Prefab, instantiate, Sprite, SpriteFrame, Vec3, EventTouch, UITransform, Label, Color } from 'cc';
 const { ccclass, property } = _decorator;
 
 export enum Player {
@@ -21,6 +21,21 @@ export class GameManager extends Component {
     // --- TAMBAHAN BARU: Referensi ke GridArea ---
     @property({ type: Node, tooltip: 'Masukkan node GridArea ke sini' })
     gridArea: Node | null = null;
+
+    @property({ type: Prefab, tooltip: 'Prefab untuk titik indikator langkah valid' })
+    validMovePrefab: Prefab | null = null;
+
+    @property({ type: Label, tooltip: 'Label UI penanda giliran' })
+    turnLabel: Label | null = null;
+
+    @property({ type: Label, tooltip: 'Label UI Skor Hitam' })
+    blackScoreLabel: Label | null = null;
+
+    @property({ type: Label, tooltip: 'Label UI Skor Putih' })
+    whiteScoreLabel: Label | null = null;
+
+    // Array untuk menyimpan node indikator agar bisa dihapus saat ganti giliran
+    private validMoveNodes: Node[] = [];
 
     private boardData: Player[][] = [];
     private readonly BOARD_SIZE: number = 8;
@@ -58,6 +73,10 @@ export class GameManager extends Component {
         this.boardData[4][4] = Player.WHITE;
 
         this.renderBoard();
+
+        this.updateTurnUI();
+        this.showValidMoves();
+        this.updateScoreUI();
     }
 
     private renderBoard() {
@@ -132,31 +151,30 @@ export class GameManager extends Component {
     }
 
     private tryPlaceDisc(row: number, col: number) {
-        if (this.boardData[row][col] !== Player.NONE) {
-            return;
-        }
+        if (this.boardData[row][col] !== Player.NONE) return;
 
-        // Dapatkan daftar bidak lawan yang bisa dibalik
         let flippableDiscs = this.getFlippableDiscs(row, col, this.currentPlayer);
 
-        // ATURAN OTHELLO: Jika tidak ada yang bisa dibalik, langkah TIDAK VALID!
-        if (flippableDiscs.length === 0) {
-            console.log("Langkah tidak valid! Harus mengepung bidak lawan.");
-            return; 
-        }
+        if (flippableDiscs.length === 0) return; 
 
-        // 1. Taruh bidak baru di papan
+        // Taruh bidak dan balik bidak lawan
         this.boardData[row][col] = this.currentPlayer;
         this.spawnDiscVisually(row, col, this.currentPlayer);
 
-        // 2. Balik semua bidak lawan yang terapit (update data & visual)
         for (let pos of flippableDiscs) {
-            this.boardData[pos.r][pos.c] = this.currentPlayer; // Update logika
-            this.flipDiscVisually(pos.r, pos.c, this.currentPlayer); // Update gambar
+            this.boardData[pos.r][pos.c] = this.currentPlayer;
+            this.flipDiscVisually(pos.r, pos.c, this.currentPlayer);
         }
 
-        // 3. Ganti giliran
+        // Ganti giliran
         this.currentPlayer = (this.currentPlayer === Player.BLACK) ? Player.WHITE : Player.BLACK;
+
+        // Update UI setelah bidak diletakkan
+        this.updateTurnUI();
+        this.showValidMoves();
+        
+        // --- TAMBAHAN BARU: Hitung ulang skor setiap kali giliran selesai ---
+        this.updateScoreUI();
     }
 
     private getFlippableDiscs(row: number, col: number, player: Player): {r: number, c: number}[] {
@@ -186,5 +204,89 @@ export class GameManager extends Component {
 
         return flippable;
     }
+
+    private getAllValidMoves(player: Player): {r: number, c: number}[] {
+        let validMoves: {r: number, c: number}[] = [];
+        
+        // Looping ke seluruh kotak di papan
+        for (let row = 0; row < this.BOARD_SIZE; row++) {
+            for (let col = 0; col < this.BOARD_SIZE; col++) {
+                // Hanya cek kotak yang kosong
+                if (this.boardData[row][col] === Player.NONE) {
+                    let flippable = this.getFlippableDiscs(row, col, player);
+                    if (flippable.length > 0) {
+                        validMoves.push({r: row, c: col});
+                    }
+                }
+            }
+        }
+        return validMoves;
+    }
+
+    private showValidMoves() {
+        // 1. Bersihkan indikator dari giliran sebelumnya
+        for (let node of this.validMoveNodes) {
+            node.destroy();
+        }
+        this.validMoveNodes = []; // Kosongkan array
+
+        // 2. Dapatkan langkah yang valid untuk pemain saat ini
+        let validMoves = this.getAllValidMoves(this.currentPlayer);
+
+        // 3. Munculkan titik di koordinat yang valid
+        if (this.validMovePrefab) {
+            for (let move of validMoves) {
+                let indicator = instantiate(this.validMovePrefab);
+                let posX = (move.c * this.CELL_SIZE) + (this.CELL_SIZE / 2);
+                let posY = -((move.r * this.CELL_SIZE) + (this.CELL_SIZE / 2));
+                
+                indicator.setPosition(new Vec3(posX, posY, 0));
+                this.gridArea.addChild(indicator);
+                
+                // Simpan ke array agar nanti bisa dihapus
+                this.validMoveNodes.push(indicator); 
+            }
+        }
+    }
+
+    private updateTurnUI() {
+        if (this.turnLabel) {
+            let playerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
+            this.turnLabel.string = `${playerName}`;
+            
+            // Opsional: Ganti warna teks biar makin interaktif (Hitam/Putih)
+            if (this.currentPlayer === Player.BLACK) {
+                this.turnLabel.color = new Color(0, 0, 0, 255); // hitam
+            } else {
+                this.turnLabel.color = new Color(255, 255, 255, 255); // Putih
+            }
+        }
+    }
+
+    private updateScoreUI() {
+        let blackCount = 0;
+        let whiteCount = 0;
+
+        // Looping ke seluruh kotak untuk menghitung jumlah masing-masing warna
+        for (let row = 0; row < this.BOARD_SIZE; row++) {
+            for (let col = 0; col < this.BOARD_SIZE; col++) {
+                if (this.boardData[row][col] === Player.BLACK) {
+                    blackCount++;
+                } else if (this.boardData[row][col] === Player.WHITE) {
+                    whiteCount++;
+                }
+            }
+        }
+
+        // Update teks pada label di layar
+        if (this.blackScoreLabel) {
+            this.blackScoreLabel.string = `Hitam: ${blackCount}`;
+        }
+        if (this.whiteScoreLabel) {
+            this.whiteScoreLabel.string = `Putih: ${whiteCount}`;
+        }
+    }
 }
+
+
 
