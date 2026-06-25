@@ -36,11 +36,23 @@ export class GameManager extends Component {
     @property({ type: Label})
     whiteScoreLabel: Label | null = null;
 
+    @property({ type: Node})
+    homePanel: Node | null = null;
+
+    @property({ type: Node})
+    gamePanel: Node | null = null;
+
+    @property({ type: Node})
+    resultPanel: Node | null = null;
+
+    @property({ type: Label})
+    resultWinnerLabel: Label | null = null;
+
     private validMoveNodes: Node[] = [];
     private boardData: Player[][] = [];
     private readonly BOARD_SIZE: number = 8;
     private currentPlayer: Player = Player.BLACK; 
-    private readonly CELL_SIZE: number = 90;
+    private readonly CELL_SIZE: number = 81.25;
     private discNodes: (Node | null)[][] = []; 
 
     //Atribut buat entitas ai nya
@@ -65,9 +77,58 @@ export class GameManager extends Component {
         [-1, -1], [-1, 1], [1, -1], [1, 1]
     ];
 
+    public showHomeScreen() {
+        if (this.homePanel) this.homePanel.active = true;
+        if (this.gamePanel) this.gamePanel.active = false;
+        if (this.resultPanel) this.resultPanel.active = false;
+    }
+
+    public onBtnPlayAsBlackClicked() {
+        this.aiPlayer = Player.WHITE; // Pemain Hitam, maka AI Putih
+        this.startGame();
+    }
+
+    public onBtnPlayAsWhiteClicked() {
+        this.aiPlayer = Player.BLACK; // Pemain Putih, maka AI Hitam
+        this.startGame();
+    }
+
     start() {
-        this.initializeBoard();
+        this.showHomeScreen(); // Hanya munculkan home panel di awal
+    }
+
+    private startGame() {
+        // Atur aktifasi panel layar
+        if (this.homePanel) this.homePanel.active = false;
+        if (this.resultPanel) this.resultPanel.active = false;
+        if (this.gamePanel) this.gamePanel.active = true;
+
         this.registerInput();
+        // Reset state dasar permainan
+        this.currentPlayer = Player.BLACK; // Hitam selalu jalan pertama sesuai aturan
+
+        // Bersihkan objek visual lama dari game sebelumnya jika ada
+        for (let row = 0; row < this.BOARD_SIZE; row++) {
+            for (let col = 0; col < this.BOARD_SIZE; col++) {
+                if (this.discNodes[row] && this.discNodes[row][col]) {
+                    this.discNodes[row][col]!.destroy();
+                }
+            }
+        }
+        for (let node of this.validMoveNodes) {
+            node.destroy();
+        }
+        this.validMoveNodes = [];
+
+        // Bangun ulang papan
+        this.initializeBoard();
+
+        // JIKA AI kebagian warna Hitam, AI harus langsung mengambil langkah pertama
+        if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) {
+            this.scheduleOnce(() => {
+                this.executeAITurn();
+            }, 0.6);
+        }
     }
 
     private initializeBoard() {
@@ -165,7 +226,7 @@ export class GameManager extends Component {
 
             if (this.turnLabel) {
                 let activePlayerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
-                this.turnLabel.string = `${activePlayerName} (Skip!)`;
+                this.turnLabel.string = `${activePlayerName} \n(Skip!)`;
             }
 
             // Jika setelah skip ternyata giliran AI, panggil AI lagi
@@ -181,11 +242,13 @@ export class GameManager extends Component {
     }
 
     private handleGameOver() {
+        // 1. Bersihkan sisa-sisa indikator langkah dari papan
         for (let node of this.validMoveNodes) {
             node.destroy();
         }
         this.validMoveNodes = [];
 
+        // 2. Hitung total skor akhir dari kedua belah pihak
         let blackCount = 0;
         let whiteCount = 0;
         for (let row = 0; row < this.BOARD_SIZE; row++) {
@@ -195,16 +258,33 @@ export class GameManager extends Component {
             }
         }
 
-        let winnerText = "";
-        if (blackCount > whiteCount) winnerText = "HITAM!";
-        else if (whiteCount > blackCount) winnerText = "PUTIH (AI)!";
-        else winnerText = "SERI!";
-        
-        if (this.turnLabel) {
-            this.giliranLabel.string = `Winner:`;
-            this.turnLabel.string = ` ${winnerText}`;
-            this.turnLabel.color = blackCount > whiteCount ? new Color(0, 0, 0, 255) : new Color(255, 255, 255, 255);        
+        // 3. Tentukan pengumuman pemenang berdasarkan warna yang dipilih pemain
+        let winnerStatus = "";
+        if (blackCount > whiteCount) {
+            // Jika Hitam menang, cek apakah Hitam itu AI atau Pemain
+            winnerStatus = this.aiPlayer === Player.BLACK ? "AI (HITAM) MENANG!" : "KAMU (HITAM) MENANG!";
+        } else if (whiteCount > blackCount) {
+            // Jika Putih menang, cek apakah Putih itu AI atau Pemain
+            winnerStatus = this.aiPlayer === Player.WHITE ? "AI (PUTIH) MENANG!" : "KAMU (PUTIH) MENANG!";
+        } else {
+            winnerStatus = "PERMAINAN SERI!";
         }
+        
+        // 4. Susun format teks hasil akhir beserta perbandingan skornya
+        if (this.resultWinnerLabel) {
+            this.resultWinnerLabel.string = 
+                `${winnerStatus}\n\n` +
+                `[ SKOR AKHIR ]\n` +
+                `Hitam : ${blackCount} keping\n` +
+                `Putih : ${whiteCount} keping\n\n` +
+                `Selisih : ${Math.abs(blackCount - whiteCount)} keping`;
+        }
+
+        // 5. Beri jeda 1.5 detik agar posisi papan akhir terlihat sebelum tertutup layar result
+        this.scheduleOnce(() => {
+            if (this.gamePanel) this.gamePanel.active = false;
+            if (this.resultPanel) this.resultPanel.active = true;
+        }, 1.5);
     }
 
     private flipDiscVisually(row: number, col: number, player: Player) {
@@ -217,13 +297,23 @@ export class GameManager extends Component {
 
     private registerInput() {
         if (this.gridArea) {
+            // Matikan pendengar sebelumnya (jika ada) agar tidak terjadi klik ganda
+            this.gridArea.off(Node.EventType.TOUCH_END, this.onBoardClicked, this);
+            
+            // Pasang pendengar baru
             this.gridArea.on(Node.EventType.TOUCH_END, this.onBoardClicked, this);
+            console.log("Sistem klik papan berhasil diaktifkan!");
         }
     }
 
     private onBoardClicked(event: EventTouch) {
+        console.log("Terdeteksi klik di layar!");
+
         // Blokir input pemain jika sedang giliran AI
-        if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) return;
+        if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) {
+            console.log("Klik diabaikan: Sedang giliran AI berpikir.");
+            return;
+        }
 
         let touchPos = event.getUILocation();
         let uiTransform = this.gridArea.getComponent(UITransform);
@@ -302,7 +392,7 @@ export class GameManager extends Component {
 
     private updateTurnUI() {
         if (this.turnLabel) {
-            let playerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih (AI)";
+            let playerName = (this.currentPlayer === Player.BLACK) ? "Hitam" : "Putih";
             this.turnLabel.string = `${playerName}`;
             this.turnLabel.color = this.currentPlayer === Player.BLACK ? new Color(0, 0, 0, 255) : new Color(255, 255, 255, 255);
         }
