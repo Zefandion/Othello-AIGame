@@ -94,20 +94,17 @@ export class GameManager extends Component {
     }
 
     start() {
-        this.showHomeScreen(); // Hanya munculkan home panel di awal
+        this.showHomeScreen();
     }
 
     private startGame() {
-        // Atur aktifasi panel layar
         if (this.homePanel) this.homePanel.active = false;
         if (this.resultPanel) this.resultPanel.active = false;
         if (this.gamePanel) this.gamePanel.active = true;
 
         this.registerInput();
-        // Reset state dasar permainan
         this.currentPlayer = Player.BLACK; // Hitam selalu jalan pertama sesuai aturan
 
-        // Bersihkan objek visual lama dari game sebelumnya jika ada
         for (let row = 0; row < this.BOARD_SIZE; row++) {
             for (let col = 0; col < this.BOARD_SIZE; col++) {
                 if (this.discNodes[row] && this.discNodes[row][col]) {
@@ -120,10 +117,9 @@ export class GameManager extends Component {
         }
         this.validMoveNodes = [];
 
-        // Bangun ulang papan
         this.initializeBoard();
 
-        // JIKA AI kebagian warna Hitam, AI harus langsung mengambil langkah pertama
+        // Jika AI kebagian warna Hitam, AI harus langsung mengambil langkah pertama
         if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) {
             this.scheduleOnce(() => {
                 this.executeAITurn();
@@ -181,7 +177,6 @@ export class GameManager extends Component {
     private tryPlaceDisc(row: number, col: number) {
         if (this.boardData[row][col] !== Player.NONE) return;
 
-        // Gunakan parameter boardData asli untuk eksekusi nyata
         let flippableDiscs = this.getFlippableDiscs(this.boardData, row, col, this.currentPlayer);
         if (flippableDiscs.length === 0) return; 
 
@@ -205,11 +200,10 @@ export class GameManager extends Component {
             this.showValidMoves();
             this.updateScoreUI();
             
-            // --- TRIGGER AI JIKA GILIRANNYA ---
             if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) {
                 this.scheduleOnce(() => {
                     this.executeAITurn();
-                }, 0.5); // Jeda 0.5 detik agar terlihat seperti sedang berpikir
+                }, 0.5);
             }
             return;
         }
@@ -242,13 +236,12 @@ export class GameManager extends Component {
     }
 
     private handleGameOver() {
-        // 1. Bersihkan sisa-sisa indikator langkah dari papan
         for (let node of this.validMoveNodes) {
             node.destroy();
         }
         this.validMoveNodes = [];
 
-        // 2. Hitung total skor akhir dari kedua belah pihak
+        // Hitung total skor akhir dari kedua belah pihak
         let blackCount = 0;
         let whiteCount = 0;
         for (let row = 0; row < this.BOARD_SIZE; row++) {
@@ -258,7 +251,6 @@ export class GameManager extends Component {
             }
         }
 
-        // 3. Tentukan pengumuman pemenang berdasarkan warna yang dipilih pemain
         let winnerStatus = "";
         if (blackCount > whiteCount) {
             // Jika Hitam menang, cek apakah Hitam itu AI atau Pemain
@@ -270,7 +262,6 @@ export class GameManager extends Component {
             winnerStatus = "PERMAINAN SERI!";
         }
         
-        // 4. Susun format teks hasil akhir beserta perbandingan skornya
         if (this.resultWinnerLabel) {
             this.resultWinnerLabel.string = 
                 `${winnerStatus}\n\n` +
@@ -280,7 +271,6 @@ export class GameManager extends Component {
                 `Selisih : ${Math.abs(blackCount - whiteCount)} keping`;
         }
 
-        // 5. Beri jeda 1.5 detik agar posisi papan akhir terlihat sebelum tertutup layar result
         this.scheduleOnce(() => {
             if (this.gamePanel) this.gamePanel.active = false;
             if (this.resultPanel) this.resultPanel.active = true;
@@ -297,10 +287,8 @@ export class GameManager extends Component {
 
     private registerInput() {
         if (this.gridArea) {
-            // Matikan pendengar sebelumnya (jika ada) agar tidak terjadi klik ganda
             this.gridArea.off(Node.EventType.TOUCH_END, this.onBoardClicked, this);
             
-            // Pasang pendengar baru
             this.gridArea.on(Node.EventType.TOUCH_END, this.onBoardClicked, this);
             console.log("Sistem klik papan berhasil diaktifkan!");
         }
@@ -327,7 +315,6 @@ export class GameManager extends Component {
         }
     }
 
-    // --- DIUBAH: Sekarang menerima parameter board agar bisa disimulasikan AI ---
     private getFlippableDiscs(board: Player[][], row: number, col: number, player: Player): {r: number, c: number}[] {
         let flippable: {r: number, c: number}[] = [];
         let opponent = (player === Player.BLACK) ? Player.WHITE : Player.BLACK;
@@ -350,7 +337,6 @@ export class GameManager extends Component {
         return flippable;
     }
 
-    // --- DIUBAH: Sekarang menerima parameter board ---
     private getAllValidMoves(board: Player[][], player: Player): {r: number, c: number}[] {
         let validMoves: {r: number, c: number}[] = [];
         for (let row = 0; row < this.BOARD_SIZE; row++) {
@@ -367,7 +353,6 @@ export class GameManager extends Component {
     }
 
     private showValidMoves() {
-        // Tampilkan indikator hanya jika giliran pemain manusia (Opsional, agar lebih rapi)
         if (this.isAIEnabled && this.currentPlayer === this.aiPlayer) return;
 
         for (let node of this.validMoveNodes) {
@@ -412,10 +397,6 @@ export class GameManager extends Component {
         if (this.blackScoreLabel) this.blackScoreLabel.string = `Hitam: ${blackCount}`;
         if (this.whiteScoreLabel) this.whiteScoreLabel.string = `Putih: ${whiteCount}`;
     }
-
-    // ==========================================
-    // --- BAGIAN LOGIKA AI (MINIMAX + TOP K) ---
-    // ==========================================
 
     private executeAITurn() {
         let validMoves = this.getAllValidMoves(this.boardData, this.aiPlayer);
@@ -495,7 +476,7 @@ export class GameManager extends Component {
         return score;
     }
 
-    // Helper untuk mensimulasikan langkah (Duplikat papan agar tidak merusak UI)
+    // Helper untuk mensimulasikan langkah 
     private simulateMove(board: Player[][], row: number, col: number, player: Player): Player[][] {
         // Clone 2D array
         let newBoard = board.map(arr => [...arr]); 
